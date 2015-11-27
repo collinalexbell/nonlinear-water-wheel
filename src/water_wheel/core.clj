@@ -2,11 +2,14 @@
   (:require [quil.core :as q]
             [quil.middleware :as m]))
 
-(def center-x 540)
-(def center-y 360)
-(def base-moment 500)
-(def start-momentum 20)
-(def time-step 2)
+(def center-x 540.0)
+(def center-y 360.0)
+(def base-moment 20000000.0)
+(def start-momentum 5000000.0)
+(def time-step 0.1)
+(def fill-rate 5)
+(def drain-rate -0.4)
+(def bin-cap 50.0)
 
 
 
@@ -44,16 +47,23 @@
 
 
 ;Need to fix this using x-left x-right
-(defn draw-bucket [{x :x y :y}]
-  (q/fill 255 255 255 0)
-  (q/quad (- x 50) (- y 50) (+ x 50) (- y 50) (+ x 35) (+ y 50) (- x 35) (+ y 50))  
-  )
+(defn draw-bucket [bin]
+  (let [{x :x y :y} bin]
+   (q/stroke 212 161 106)
+   (q/fill 255 255 255 0)
+  (q/quad (- x 50) (- y 50) (+ x 50) (- y 50) (+ x 50) (+ y 50) (- x 50) (+ y 50))  
+  ;Now fill the bucket
+  (let [percent (* 100.0 (/ (bin :grams-of-water) bin-cap))]
+    (q/stroke 0 0 255 0)
+    (q/fill 0 0 255 50)
+    (let [bot-y (+ y 50) top-y (- (+ y 50) percent)]
+      (q/quad (- x 50) top-y (+ x 50) top-y (+ x 50) bot-y (- x 50) bot-y)))))
 
 
 
 
 (defn create-default-source []
-  {:fill-rate 10 :x-left (- center-x 25) :x-right (+ center-x 25)}
+  {:fill-rate 10 :x-left (- center-x 25)  :x-right (+ center-x 25)}
   )
 
 
@@ -70,7 +80,13 @@
 
 
 (defn fill-bins [wheel water-levels]
-  (map (fn [bin water-level] (assoc bin :grams-of-water  (+ water-level (get bin :grams-of-water 0))))  
+  (map (fn [bin water-level] 
+         (let [new-water-level (+ water-level (get bin :grams-of-water 0))]                       
+           (if (> new-water-level 0.0) 
+              (if (< new-water-level bin-cap) 
+                (assoc bin :grams-of-water new-water-level)  
+                (assoc bin :grams-of-water water-level))
+              (assoc bin :grams-of-water 0))))
   (wheel :bins) water-levels))
 
 
@@ -85,8 +101,8 @@
                   (< (source :x-right) (bin :x-left))
                   (> (bin :y) center-y )
                   ))
-            (source :fill-rate) 
-            0))
+            fill-rate  
+            drain-rate))
      (wheel :bins)))
 
 
@@ -97,6 +113,7 @@
   (q/text (str "Wheel Angle: " (:angle wheel)) 20 20)
   (q/text (str "d/fill: " (apply str (determine-fill wheel src))) 20 40)
   (doseq [bin (:bins wheel)]
+    (q/stroke 212 161 106)
     (q/line center-x center-y (:x bin) (:y bin))
     (draw-bucket bin)) 
   (q/fill 255 255 255 0)
@@ -107,8 +124,7 @@
 
 (defn draw-source [source]
   (q/stroke 128 76 21)
-  (q/quad (source :x-right) 10 (source :x-left) 10 (source :x-left) 40 (source :x-right) 40)
-  )
+  (q/quad (source :x-right) 10 (source :x-left) 10 (source :x-left) 40 (source :x-right) 40))
 
 (with-test 
   (defn calculate-single-torque  [center bin]
@@ -124,7 +140,7 @@
       (q/dist x y c-x c-y) 
 
       ;Subtract 90 and then take sin of it to get the normalized component
-      (if (= 0 (- x c-x))
+      (if (< (q/abs (- x c-x)) 0.001)
         0.0
         (q/sin 
           (q/radians (-
@@ -170,43 +186,51 @@
         (spun-wheel :bins) (wheel :bins)) 
       :angular-momentum (wheel :angular-momentum start-momentum))))
 
+(defn print_n_return [pre obj post]
+  (println (str pre obj post))
+  obj)
+
 (defn update-wheel-state [wheel]
   (println wheel)
   (let [torque (reduce + 
-                        (map 
-                          (fn [bin] (calculate-single-torque {:x center-x :y center-y} (grams-to-newtons-bin bin))) (wheel :bins)))
+                        (print_n_return "total_torque: "(map 
+                          (fn [bin] (calculate-single-torque {:x center-x :y center-y} (grams-to-newtons-bin bin))) (wheel :bins)) ""))
         moment (calculate-moment wheel)]
   ;angular_momentum = old_angular_momentum + (tourque * time_step)
   ;angle = (old_angular_momentum/moment*time_step) + .5*(torque/moment)*t^2
 
-    (let [d-angle (+ (* (wheel :angular-momentum start-momentum) (/ 1 moment) time-step)
+    (let [d-angle (+ (* (wheel :angular-momentum start-momentum) (/ 1.0 moment) time-step)
                      (* 0.5 (/ torque moment) (q/sq time-step)))]
           (assoc 
             (spin-wheel wheel d-angle)
-            :angular-momentum (+ (wheel :angular-momentum start-momentum) (* torque time-step)))))) 
+            :angular-momentum (+ (wheel :angular-momentum start-momentum) (* torque  time-step)))))) 
 
 
 
 (defn draw-water [source fill-array]
   (q/stroke 0 0 255 0)
   (q/fill 0 0 255 50)
-  (if (= 0 (reduce + fill-array))
+  (if (> 0 (reduce + fill-array))
   (q/quad (source :x-right) 40 (source :x-left) 40 (source :x-left) 290 (source :x-right) 290)  
   (q/quad (source :x-right) 40 (source :x-left) 40 (source :x-left) 100 (source :x-right) 100)))
 
 
 (defn update-state [state]
   ; Update sketch state by changing circle color and position.
-  (println "In update-state")
-  (println (state :wheel))
-  (let [wheel (update-wheel-state 
-    (assoc (state :wheel) :bins 
+  ;(println "In update-state")
+  ;(println (state :wheel))
+  (loop [loop-state state loop-num 0]
+    (let [wheel (update-wheel-state 
+    (assoc (loop-state :wheel) :bins 
       (fill-bins
-        (state :wheel)
-        (determine-fill (state :wheel) (create-default-source)))))] 
-  (println "After update-wheel-state")
-  (println wheel)
-  {:wheel wheel  :source (create-default-source) :fill-array (determine-fill wheel (create-default-source))}))
+        (loop-state :wheel)
+        (determine-fill (loop-state :wheel) (create-default-source)))))] 
+  ;(println "After update-wheel-state")
+  ;(println wheel)
+  (if (< loop-num 10)
+    (recur {:wheel wheel  :source (create-default-source) :fill-array (determine-fill wheel (create-default-source))} (+ 1 loop-num))
+    loop-state))))
+
 
 
 (defn draw-state [state]
