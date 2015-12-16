@@ -4,16 +4,25 @@
 
 (def center-x 540.0)
 (def center-y 360.0)
-(def base-moment 20000000.0)
-(def start-momentum 5000000.0)
+(def base-moment 200000.0)
+(def start-momentum 0)
 (def time-step 0.1)
-(def fill-rate 5)
-(def drain-rate -0.4)
-(def bin-cap 50.0)
+(def fill-rate 1.0)
+(def drain-rate -0.042
+  )
+(def bin-cap 5000.0)
+(def friction-loss 170000)
+(def num-of-bins 8)
 
 
 
 (use 'clojure.test)
+
+(defn print_n_return [pre obj post]
+  (println pre) 
+  (println obj) 
+  (println post)
+  obj)
 
 (with-test
   (defn angle-and-length-to-position [{angle :angle length :length}]
@@ -80,14 +89,20 @@
 
 
 (defn fill-bins [wheel water-levels]
-  (map (fn [bin water-level] 
+  (println "\n\n\n")
+  (println "wheel: ")
+  (println wheel)
+  (println "water levels: ")
+  (println water-levels)
+  (print_n_return "after_fill_bins" (map (fn [bin water-level] 
          (let [new-water-level (+ water-level (get bin :grams-of-water 0))]                       
            (if (> new-water-level 0.0) 
               (if (< new-water-level bin-cap) 
-                (assoc bin :grams-of-water new-water-level)  
-                (assoc bin :grams-of-water water-level))
+                (assoc bin :grams-of-water new-water-level)
+                bin
+                )
               (assoc bin :grams-of-water 0))))
-  (wheel :bins) water-levels))
+  (wheel :bins) water-levels) "\n\n\n" ))
 
 
 
@@ -146,7 +161,7 @@
           (q/radians (-
             (+ 
               ;To make up for the -pi/2 - pi/2 range
-              (if (< x 0)
+              (if (< (- x c-x) 0)
                 180  
                 0
                 )
@@ -186,15 +201,33 @@
         (spun-wheel :bins) (wheel :bins)) 
       :angular-momentum (wheel :angular-momentum start-momentum))))
 
-(defn print_n_return [pre obj post]
-  (println (str pre obj post))
-  obj)
+(with-test
+  (defn apply-friction-to-torque [friction total-torque]
+    (if (= 0 total-torque)
+      0
+      (if (< total-torque 0)
+        (if (> (+ total-torque friction) 0) ;We don't want friction to "apply torque" only resist
+          0 ;Friction holds wheel in place
+          (+ total-torque friction))
+        (if (< (- total-torque friction) 0)
+          0 ;Friction holds wheel in place
+          (- total-torque friction)))))
+  (is (= 0 (apply-friction-to-torque 2000.0 -1500.0))) 
+  (is (= -500.0 (apply-friction-to-torque 2000.0 -2500.0) ))
+  (is (= 0 (apply-friction-to-torque 200.0 150.0)))
+  (is (= 5.0 (apply-friction-to-torque 25.0 30.0))))
+
+(defn apply-friction-to-momentum [friction t momentum]
+  (let [momentum-change (* friction t)]
+    (apply-friction-to-torque momentum-change momentum)))
+
 
 (defn update-wheel-state [wheel]
-  (println wheel)
-  (let [torque (reduce + 
+  ;(println wheel)
+  (let [torque (apply-friction-to-torque friction-loss
+                               (reduce + 
                         (print_n_return "total_torque: "(map 
-                          (fn [bin] (calculate-single-torque {:x center-x :y center-y} (grams-to-newtons-bin bin))) (wheel :bins)) ""))
+                          (fn [bin] (calculate-single-torque {:x center-x :y center-y} (grams-to-newtons-bin bin))) (wheel :bins)) "")))
         moment (calculate-moment wheel)]
   ;angular_momentum = old_angular_momentum + (tourque * time_step)
   ;angle = (old_angular_momentum/moment*time_step) + .5*(torque/moment)*t^2
@@ -203,7 +236,7 @@
                      (* 0.5 (/ torque moment) (q/sq time-step)))]
           (assoc 
             (spin-wheel wheel d-angle)
-            :angular-momentum (+ (wheel :angular-momentum start-momentum) (* torque  time-step)))))) 
+            :angular-momentum (+ (apply-friction-to-momentum friction-loss time-step (wheel :angular-momentum start-momentum)) (* torque  time-step)))))) 
 
 
 
@@ -251,7 +284,7 @@
   (q/color-mode :rgb)
   ; setup function returns initial state. It contains
   ; circle color and position.
-  {:wheel (create-wheel 6 200 0) :source (create-default-source)})
+  {:wheel (create-wheel num-of-bins 200 20) :source (create-default-source)})
 
 
 (q/defsketch water_wheel
