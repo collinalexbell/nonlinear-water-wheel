@@ -1,6 +1,6 @@
 # water_wheel
 
-A Quil sketch designed to ... well, that part is up to you.
+A Quil sketch designed to ... simulate chaos in the nonlinear equations of a water wheel.
 
 ## Usage
 
